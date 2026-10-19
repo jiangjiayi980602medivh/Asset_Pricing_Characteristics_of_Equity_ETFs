@@ -1,0 +1,608 @@
+import pandas as pd
+import numpy as np
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+import matplotlib.pyplot as plt
+import scipy.stats as stats
+from functools import reduce
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+import seaborn as sns
+
+# 假设 ROE 是原始 DataFrame
+ROE_clean = ROE.copy()
+
+# 1. 保留第一列（指数代码）
+ROE_clean.iloc[:, 1:] = ROE_clean.iloc[:, 1:].apply(pd.to_numeric, errors='coerce')  # 转换为数值型
+# 先明确第一列列名
+index_col = ROE_clean.columns[0]  # 例如 '指数代码'
+
+# 非日期列，即第一列
+non_date_cols = [index_col]
+
+
+# 2. 转换列名为日期格式（除了第一列）
+date_cols = ROE_clean.columns[1:]
+new_date_cols = pd.to_datetime(date_cols, errors='coerce')
+
+# 更新列名
+ROE_clean.columns = [ROE_clean.columns[0]] + list(new_date_cols)
+
+# 3. 对数值列做线性插值
+threshold = ROE_clean.shape[1] / 3   #数据不足1/3则不研究
+ROE_clean = ROE_clean[ROE_clean.isnull().sum(axis=1) <= threshold]
+ROE_clean.iloc[:, 1:] = ROE_clean.iloc[:, 1:].interpolate(axis=1, method='linear')
+
+# 设定分割日期
+cutoff = pd.to_datetime('2024-09-30')
+
+# 分割列
+cols_before = [col for col in ROE_clean.columns if (isinstance(col, pd.Timestamp) and col <= cutoff) or (col in non_date_cols)]
+cols_after  = [col for col in ROE_clean.columns if (isinstance(col, pd.Timestamp) and col > cutoff) or (col in non_date_cols)]
+
+# 分割数据
+df_before = ROE_clean.loc[:, cols_before]
+df_after = ROE_clean.loc[:, cols_after]
+
+# 计算均值和标准差，排除非日期列
+before_mean = df_before.loc[:, ~df_before.columns.isin(non_date_cols)].astype(float).mean(axis=1)
+before_std  = df_before.loc[:, ~df_before.columns.isin(non_date_cols)].astype(float).std(axis=1)
+
+after_mean = df_after.loc[:, ~df_after.columns.isin(non_date_cols)].astype(float).mean(axis=1)
+after_std  = df_after.loc[:, ~df_after.columns.isin(non_date_cols)].astype(float).std(axis=1)
+
+# 组合结果，带上指数代码
+roe_result = pd.DataFrame({
+    index_col: ROE_clean[index_col],
+    'roe_mean_before': before_mean,
+    'roe_std_before': before_std,
+    'roe_mean_after': after_mean,
+    'roe_std_after': after_std
+})
+
+# 复制原始数据
+ROE_increase_clean = ROE_increase.copy()
+
+# 确保除了第一列之外都是数值（强制转换）
+for col in ROE_increase_clean.columns[1:]:
+    ROE_increase_clean[col] = pd.to_numeric(ROE_increase_clean[col], errors='coerce')
+
+# 检查类型
+print(ROE_increase_clean.dtypes)
+
+# 转换列名为日期格式（除第一列）
+increase_date_cols = ROE_increase_clean.columns[1:]
+increase_new_date_cols = pd.to_datetime(increase_date_cols, errors='coerce')
+ROE_increase_clean.columns = [ROE_increase_clean.columns[0]] + list(increase_new_date_cols)
+
+# 筛选缺失值不超过阈值的行
+threshold = ROE_increase_clean.shape[1] / 3
+ROE_increase_clean = ROE_increase_clean[ROE_increase_clean.isnull().sum(axis=1) <= threshold]
+
+# 对数值列做线性插值（axis=1：横向插值）
+ROE_increase_clean.iloc[:, 1:] = ROE_increase_clean.iloc[:, 1:].interpolate(method='linear', axis=1, limit_direction='both')
+
+# 设定分割日期
+cutoff = pd.to_datetime('2024-09-30')
+
+# 分割列
+cols_before = [col for col in ROE_increase_clean.columns if (isinstance(col, pd.Timestamp) and col <= cutoff) or (col in non_date_cols)]
+cols_after  = [col for col in ROE_increase_clean.columns if (isinstance(col, pd.Timestamp) and col > cutoff) or (col in non_date_cols)]
+
+# 分割数据
+df_before = ROE_increase_clean.loc[:, cols_before]
+df_after = ROE_increase_clean.loc[:, cols_after]
+
+# 计算均值和标准差，排除非日期列
+before_mean = df_before.loc[:, ~df_before.columns.isin(non_date_cols)].astype(float).mean(axis=1)
+before_std  = df_before.loc[:, ~df_before.columns.isin(non_date_cols)].astype(float).std(axis=1)
+
+after_mean = df_after.loc[:, ~df_after.columns.isin(non_date_cols)].astype(float).mean(axis=1)
+after_std  = df_after.loc[:, ~df_after.columns.isin(non_date_cols)].astype(float).std(axis=1)
+
+# 组合结果，带上指数代码
+roe_increase_result = pd.DataFrame({
+    index_col: ROE_clean[index_col],
+    'roe_increase_mean_before': before_mean,
+    'roe_increase_std_before': before_std,
+    'roe_increase_mean_after': after_mean,
+    'roe_increase_std_after': after_std
+})
+
+print(roe_increase_result)
+
+# Step 1: 设置第一列（股票代码）为索引
+close_price.set_index(close_price.columns[0], inplace=True)
+print(close_price.columns)
+
+# Step 2: 把所有列名转换为 datetime 类型
+close_price.columns = pd.to_datetime(close_price.columns, errors='coerce')
+
+# Step 3: 转换值为数值型
+close_price = close_price.apply(pd.to_numeric, errors='coerce')
+
+# Step 4: 计算对数收益率（横向）
+log_return = np.log(close_price / close_price.shift(axis=1))
+
+print(log_return)
+
+close_log_return = log_return.drop(log_return.columns[0], axis=1)
+# 每个 ETF 的最大回撤率
+max_drawdown_per_etf = close_log_return.max(axis=1)
+
+# 每个 ETF 最大回撤发生的日期（哪一列）
+date_of_max_drawdown = close_log_return.idxmax(axis=1)
+
+# 合并成一个 DataFrame，方便查看
+etf_max_drawdown_df = pd.DataFrame({
+    '最大回撤值': max_drawdown_per_etf
+})
+
+print(etf_max_drawdown_df)
+
+##关于每一个时间段的收盘价对数变化率的折线图
+log_return.plot(figsize=(12, 6), title="Log Return Over Time")
+plt.ylabel("Log Return")
+plt.grid(True)
+plt.show()
+
+#关于每一支ETF收盘价对数变化率的折线图
+close_log_return_T=close_log_return.T
+close_log_return_T.plot(figsize=(14, 6), title="Log Returns of Different ETFs Over Time")
+plt.ylabel("Log Return")
+plt.grid(True)
+plt.show()
+
+##计算每一支ETF收盘价对数变化率的基本指标
+close_log_return_T.describe()
+
+## 计算收盘价对数变化率的偏度
+close_log_return_T.skew()
+
+## 这个显示的是各个数据的峰度
+close_log_return_T.kurtosis()
+
+##大多数的P值都是在0左右，因此我们可以认为对数变化率并不符合正态分布
+for ETF in close_log_return_T.columns:
+    data = close_log_return_T[ETF].dropna()
+    if len(data) >= 3:
+        stat, p_value = stats.shapiro(data)
+        print(f"{ETF}: p = {p_value:.20f}")
+    else:
+        print(f"{ETF}: Not enough data for  Shapiro test")
+
+# 设定分割日期
+cutoff = pd.to_datetime('2024-09-30')
+
+# 分割列
+cols_before = [col for col in close_log_return.columns if (isinstance(col, pd.Timestamp) and col <= cutoff) ]
+cols_after = [col for col in close_log_return.columns if (isinstance(col, pd.Timestamp) and col > cutoff)]
+
+
+# 分割数据
+df_before = close_log_return.loc[:, cols_before]
+df_after = close_log_return.loc[:, cols_after]
+
+# 计算均值和标准差，排除非日期列
+before_mean = df_before.loc[:, ~df_before.columns.isin(non_date_cols)].astype(float).mean(axis=1)
+before_std  = df_before.loc[:, ~df_before.columns.isin(non_date_cols)].astype(float).std(axis=1)
+
+after_mean = df_after.loc[:, ~df_after.columns.isin(non_date_cols)].astype(float).mean(axis=1)
+after_std  = df_after.loc[:, ~df_after.columns.isin(non_date_cols)].astype(float).std(axis=1)
+
+# 组合结果，带上指数代码
+log_return_result = pd.DataFrame({
+    'log_return_mean_before': before_mean,
+    'log_return_std_before': before_std,
+    'log_return_mean_after': after_mean,
+    'log_return_std_after': after_std
+})
+
+print(log_return_result)
+
+etf_series = log_return.iloc[3].dropna()
+
+# 画自相关图
+plot_acf(etf_series, lags=20)
+plot_pacf(etf_series, method='ywm',lags=20)
+plt.show()
+
+plot_acf(close_price.iloc[2,2:700], lags=20)
+plot_pacf(close_price.iloc[2,2:700], method='ywm',lags=20)
+plt.show()
+
+Beta.set_index(Beta.columns[0], inplace=True)
+
+Beta.columns = pd.to_datetime(Beta.columns, errors='coerce')
+
+Beta = Beta.apply(pd.to_numeric, errors='coerce')
+
+threshold = Beta.shape[1] / 3   # 数据不足1/3则不研究
+
+
+Beta_clean = Beta[Beta.isnull().sum(axis=1) <= threshold].copy()
+
+Beta_clean.iloc[:, :] = Beta_clean.iloc[:, :].interpolate(axis=1, method='linear')
+
+# 设定分割日期
+cutoff = pd.to_datetime('2024-09-30')
+
+# 分割列
+cols_before = [col for col in Beta_clean.columns if (isinstance(col, pd.Timestamp) and col <= cutoff) or (col in non_date_cols)]
+cols_after  = [col for col in Beta_clean.columns if (isinstance(col, pd.Timestamp) and col > cutoff) or (col in non_date_cols)]
+
+# 分割数据
+df_before = Beta_clean.loc[:, cols_before]
+df_after = Beta_clean.loc[:, cols_after]
+
+# 计算均值和标准差
+beta_before_mean = df_before.loc[:, ~df_before.columns.isin(non_date_cols)].astype(float).mean(axis=1)
+beta_before_std  = df_before.loc[:, ~df_before.columns.isin(non_date_cols)].astype(float).std(axis=1)
+
+beta_after_mean = df_after.loc[:, ~df_after.columns.isin(non_date_cols)].astype(float).mean(axis=1)
+beta_after_std  = df_after.loc[:, ~df_after.columns.isin(non_date_cols)].astype(float).std(axis=1)
+
+# 组合结果，带上指数代码
+beta_result = pd.DataFrame({
+    'beta_mean_before': beta_before_mean,
+    'beta_std_before': beta_before_std,
+    'beta_mean_after': beta_after_mean,
+    'beta_std_after': beta_after_std
+})
+
+print(beta_result)
+
+alpha.set_index(alpha.columns[0], inplace=True)
+
+alpha.columns = pd.to_datetime(alpha.columns, errors='coerce')
+
+alpha = alpha.apply(pd.to_numeric, errors='coerce')
+
+threshold = alpha.shape[1] / 3   # 数据不足1/3则不研究
+
+alpha_clean = alpha[alpha.isnull().sum(axis=1) <= threshold].copy()
+
+alpha_clean.iloc[:, :] = alpha_clean.iloc[:, :].interpolate(axis=1, method='linear')
+
+# 设定分割日期
+cutoff = pd.to_datetime('2024-09-30')
+
+# 分割列
+cols_before = [col for col in alpha_clean.columns if (isinstance(col, pd.Timestamp) and col <= cutoff) ]
+cols_after = [col for col in alpha_clean.columns if (isinstance(col, pd.Timestamp) and col > cutoff)]
+
+
+# 分割数据
+df_before = alpha_clean.loc[:, cols_before]
+df_after = alpha_clean.loc[:, cols_after]
+
+# 计算均值和标准差
+alpha_before_mean = df_before.loc[:, ~df_before.columns.isin(non_date_cols)].astype(float).mean(axis=1)
+alpha_before_std = df_before.loc[:, ~df_before.columns.isin(non_date_cols)].astype(float).std(axis=1)
+alpha_before_sharpe_ratio = alpha_before_mean/alpha_before_std
+
+alpha_after_mean = df_before.loc[:, ~df_before.columns.isin(non_date_cols)].astype(float).mean(axis=1)
+alpha_after_std  = df_before.loc[:, ~df_before.columns.isin(non_date_cols)].astype(float).std(axis=1)
+alpha_after_sharpe_ratio = alpha_after_mean/alpha_after_std
+
+# 组合结果，带上指数代码
+alpha_result = pd.DataFrame({
+    'alpha_mean_before': alpha_before_mean,
+    'alpha_std_before': alpha_before_std,
+    'alpha_before_sharpe_ratio':alpha_before_sharpe_ratio,
+    'alpha_mean_after': alpha_after_mean,
+    'alpha_std_after': alpha_after_std,
+    'alpha_after_sharpe_ratio':alpha_after_sharpe_ratio
+})
+print(alpha_result)
+
+PB.set_index(PB.columns[0], inplace=True)
+PB.columns = pd.to_datetime(PB.columns, errors='coerce')
+
+PB = PB.apply(pd.to_numeric, errors='coerce')
+
+threshold = PB.shape[1] / 3   # 数据不足1/3则不研究
+
+PB_clean = PB[PB.isnull().sum(axis=1) <= threshold].copy()
+
+PB_clean.iloc[:, :] = PB_clean.iloc[:, :].interpolate(axis=1, method='linear')
+
+cutoff = pd.to_datetime('2024-09-30')
+
+# 分割列
+cols_before = [col for col in PB_clean.columns if isinstance(col, pd.Timestamp) and col <= cutoff]
+cols_after  = [col for col in PB_clean.columns if isinstance(col, pd.Timestamp) and col > cutoff]
+
+# 分割数据
+df_before = PB_clean.loc[:, cols_before]
+df_after  = PB_clean.loc[:, cols_after]
+
+# 计算均值和标准差
+PB_before_mean = df_before.loc[:, ~df_before.columns.isin(non_date_cols)].astype(float).mean(axis=1)
+PB_before_std  = df_before.loc[:, ~df_before.columns.isin(non_date_cols)].astype(float).std(axis=1)
+
+PB_after_mean = df_after.loc[:, ~df_after.columns.isin(non_date_cols)].astype(float).mean(axis=1)
+PB_after_std  = df_after.loc[:, ~df_after.columns.isin(non_date_cols)].astype(float).std(axis=1)
+
+# 组合结果
+PB_result = pd.DataFrame({
+    'PB_mean_before': PB_before_mean,
+    'PB_std_before': PB_before_std,
+    'PB_mean_after': PB_after_mean,
+    'PB_std_after': PB_after_std
+})
+
+print(PB_result)
+
+dfs = [roe_result, roe_increase_result, etf_max_drawdown_df, beta_result, log_return_result, 
+       alpha_result,PB_result]
+
+df_merged = reduce(lambda left, right: pd.merge(left, right, on='ETF', how='inner'), dfs)
+
+import os
+# 假设你的 DataFrame 叫 merged
+df = df_merged.copy()
+
+# 1️⃣ 删除 ETF 为 NaN 的行
+df = df.dropna(subset=['ETF'])
+
+# 2️⃣ 删除 ETF 为空字符串或全是空格的行
+df = df[df['ETF'].str.strip() != ""]
+
+# 3️⃣ 删除 ETF 重复行（保留第一次出现的）
+df = df.drop_duplicates(subset=['ETF'], keep='first')
+
+ETF=df.iloc[:,:1]
+# 只保留数值指标，去掉ETF名称列
+features = df.select_dtypes(include=[float, int])
+feature_names = features.columns
+
+# 数据标准化
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(features)
+
+# PCA分析，取全部主成分
+pca = PCA()
+X_pca = pca.fit_transform(X_scaled)
+
+# 输出每个主成分的方差贡献比例
+explained_variance_ratio = pca.explained_variance_ratio_
+for i, var_ratio in enumerate(explained_variance_ratio):
+    print(f'主成分 PC{i+1} 解释的方差比例: {var_ratio:.4f}')
+
+print('\n')
+
+# 输出主成分载荷矩阵：每个主成分对原始变量的权重（loadings）
+loadings = pd.DataFrame(
+    pca.components_.T,
+    columns=[f'PC{i+1}' for i in range(len(feature_names))],
+    index=feature_names
+)
+
+print('主成分载荷矩阵（每个主成分对指标的权重）：')
+print(loadings)
+
+X_pca[:, :3]
+
+# 设置中文字体和负号正常显示
+plt.rcParams['font.sans-serif'] = ['STHeiti Light'] 
+plt.rcParams['axes.unicode_minus'] = False
+
+fig = plt.figure(figsize=(10, 7))
+ax = fig.add_subplot(111, projection='3d')
+
+x = X_pca[:, 0]  # PC1
+y = X_pca[:, 1]  # PC2
+z = X_pca[:, 2]  # PC3
+
+ax.scatter(x, y, z, c='blue', marker='o', alpha=0.7)
+
+ax.set_xlabel('PC1')
+ax.set_ylabel('PC2')
+ax.set_zlabel('PC3')
+ax.set_title('PCA')
+
+plt.show()
+
+# 聚类
+kmeans = KMeans(n_clusters=4, random_state=42)
+labels = kmeans.fit_predict(X_pca[:, :3])
+
+# 3D 散点图着色
+fig = plt.figure(figsize=(10, 7))
+ax = fig.add_subplot(111, projection='3d')
+scatter = ax.scatter(X_pca[:, 0], X_pca[:, 1], X_pca[:, 2],
+                     c=labels, cmap='tab10', marker='o', alpha=0.7)
+
+ax.set_xlabel('PC1')
+ax.set_ylabel('PC2')
+ax.set_zlabel('PC3')
+ax.set_title('PCA (KMeans)')
+
+plt.legend(*scatter.legend_elements(), title="Cluster")
+plt.show()
+
+range_n_clusters = list(range(2, 11))  # 2到10类
+
+sse = []  # 簇内误差平方和
+silhouette_avg = []  # 轮廓系数平均值
+
+for n_clusters in range_n_clusters:
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    cluster_labels = kmeans.fit_predict(X_pca)
+    
+    sse.append(kmeans.inertia_)
+    
+    # 计算轮廓系数，要求类别数 > 1
+    score = silhouette_score(X_pca, cluster_labels)
+    silhouette_avg.append(score)
+
+# 画图
+fig, ax1 = plt.subplots(figsize=(10, 5))
+
+color = 'tab:blue'
+ax1.set_xlabel('Number of clustering categories')
+ax1.set_ylabel('Sum of squared intra cluster errors (SSE)', color=color)
+ax1.plot(range_n_clusters, sse, marker='o', color=color)
+ax1.tick_params(axis='y', labelcolor=color)
+
+ax2 = ax1.twinx()
+color = 'tab:red'
+ax2.set_ylabel(' Silhouette Score', color=color)
+ax2.plot(range_n_clusters, silhouette_avg, marker='o', linestyle='--', color=color)
+ax2.tick_params(axis='y', labelcolor=color)
+
+plt.title('Elbow method and contour coefficient evaluation for different class numbers')
+plt.show()
+
+# 生成结果表格，算出SSE，Silhousette的具体数值
+df_results = pd.DataFrame({
+    "range_n_clusters": range_n_clusters,
+    "SSE": sse,
+    "Silhouette": silhouette_avg
+})
+
+print(df_results)
+
+# 聚类
+kmeans = KMeans(n_clusters=6, random_state=42)
+labels = kmeans.fit_predict(X_pca[:, :3])
+
+# 3D 散点图着色
+fig = plt.figure(figsize=(10, 7))
+ax = fig.add_subplot(111, projection='3d')
+scatter = ax.scatter(X_pca[:, 0], X_pca[:, 1], X_pca[:, 2],
+                     c=labels, cmap='tab10', marker='o', alpha=0.7)
+
+ax.set_xlabel('PC1')
+ax.set_ylabel('PC2')
+ax.set_zlabel('PC3')
+ax.set_title('PCA (KMeans)')
+
+plt.legend(*scatter.legend_elements(), title="Cluster")
+plt.show()
+
+kmeans = KMeans(n_clusters=6, random_state=42)
+kmeans.fit(X_pca)  # X_pca 是你PCA降维后的数据
+
+labels = kmeans.labels_ 
+df["Cluster"] = labels
+
+# 获取桌面路径
+desktop = "/Users/fengjuzhudejiedao/Desktop"
+
+# 拼接完整文件路径
+file_path = os.path.join(desktop, "df.csv")
+
+# 导出
+df.to_csv(file_path, index=False, encoding="utf-8-sig")
+
+print((f"已保存到: {file_path}"), "Desktop")
+
+# 拼接完整文件路径
+file_path = os.path.join(desktop, "merged.csv")
+
+# 导出
+df_merged.to_csv(file_path, index=False, encoding="utf-8-sig")
+
+print(f"已保存到: {file_path}")
+
+group_stats = df.groupby('Cluster')[['roe_mean_before', 'roe_std_before', 'roe_mean_after', 'roe_std_after','roe_increase_mean_before','roe_increase_std_before','roe_increase_mean_after','roe_increase_std_after','最大回撤值','beta_mean_before','beta_std_before','beta_mean_after','beta_std_after','log_return_mean_before','log_return_std_before','log_return_mean_after','log_return_std_after','alpha_mean_before','alpha_std_before','alpha_before_sharpe_ratio','alpha_mean_after','alpha_std_after','alpha_after_sharpe_ratio','PB_mean_before','PB_std_before','PB_mean_after','PB_std_after']].agg(['mean', 'std'])
+print(group_stats)
+
+# 获取桌面路径
+desktop = "/Users/fengjuzhudejiedao/Desktop"
+
+# 拼接完整文件路径
+file_path = os.path.join(desktop, "group_stats.csv")
+
+# 导出
+group_stats.to_csv(file_path, index=False, encoding="utf-8-sig")
+
+
+
+print(f"已保存到: {file_path}")
+
+# 先把它们合成DataFrame
+df_pca = pd.DataFrame(X_pca[:, :5], columns=['PC1', 'PC2', 'PC3','PC4','PC5'])
+df_pca['cluster'] = labels  
+
+# 计算每组PC1, PC2, PC3的均值和标准差
+group_stats = df_pca.groupby('cluster').agg(['mean', 'std'])
+
+print(group_stats)
+
+variables = ['roe_mean_before', 'roe_std_before', 'roe_mean_after', 'roe_std_after',
+             'beta_mean_before','beta_std_before','beta_mean_after','beta_std_after',
+             'alpha_mean_before','alpha_mean_after','alpha_after_sharpe_ratio',
+             'PB_mean_before','PB_mean_after']
+
+for var in variables:
+    plt.figure(figsize=(8,5))
+    sns.boxplot(x='Cluster', y=var, data=df)
+    plt.title(f'{var} by Cluster')
+    plt.show()
+
+print(ROE_clean.dtypes) 
+
+etf_list = ETF.squeeze().tolist() 
+plt.figure(figsize=(14,6)) 
+
+for etf in etf_list:
+    if etf in close_price.index:
+        y = close_price.loc[etf]
+        # 如果是 DataFrame 取第一行
+        if isinstance(y, pd.DataFrame):
+            y = y.iloc[0]
+        # 转成 numpy 数组，保证是一维
+        y = y.values
+        # 如果 y 和 columns 长度不一致，可以截取到最小长度
+        x = close_price.columns[:len(y)]
+        plt.plot(x, y, label=etf)
+
+plt.xlabel("Date")
+plt.ylabel("Close Price")
+plt.title("ETF Price over Time")
+plt.legend()
+plt.show()
+
+import seaborn as sns
+
+plt.figure(figsize=(14,8))
+sns.heatmap(close_price, cmap="viridis", cbar_kws={'label': 'Close Price'})
+plt.xlabel("Date")
+plt.ylabel("ETF")
+plt.title("ETF Close Price Heatmap")
+plt.show()
+
+from statsmodels.graphics.tsaplots import plot_acf
+
+plot_acf(close_price.loc['000066.SH'].dropna(), lags=60)  # 看前60天自相关
+plt.show()
+
+from statsmodels.tsa.seasonal import seasonal_decompose
+
+result = seasonal_decompose(close_price.loc['000066.SH'].dropna(), period=80)
+result.plot()
+plt.show()
+
+result = seasonal_decompose(close_price.loc['000987.SH'].dropna(), period=80)
+result.plot()
+plt.show()
+merged = pd.merge(industry, df, on="ETF", how="left")
+
+print(merged.head())
+
+# 获取桌面路径
+desktop = "/Users/fengjuzhudejiedao/Desktop"
+
+# 拼接完整文件路径
+file_path = os.path.join(desktop, "merged.csv")
+
+# 导出
+merged.to_csv(file_path, index=False, encoding="utf-8-sig")
+
+
+
+print(f"已保存到: {file_path}")
